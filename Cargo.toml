@@ -1,0 +1,20 @@
+[package]
+name = "mr"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "coordinator"
+path = "src/coordinator.rs"
+
+[[bin]]
+name = "worker"
+path = "src/worker.rs"
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+queues = "1.1.0"
+spmc = "0.3.0"
