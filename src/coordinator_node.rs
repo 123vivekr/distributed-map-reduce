@@ -1,15 +1,20 @@
-use mr::{FromServer, FromWorker, Operation, Task};
+use mr::{FromServer, FromWorker, Task};
 use spmc;
 use std::collections::HashMap;
 use std::fs;
-use std::hash::Hash;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::ops::RangeBounds;
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Operation {
+    Map,
+    Reduce,
+}
 
 #[derive(Clone, Debug)]
 struct Process {
@@ -27,14 +32,17 @@ pub struct Coordinator {
 impl Coordinator {
     fn new(filenames: Vec<String>, n_reduce: u8) -> Coordinator {
         Coordinator {
-            filenames: filenames,
+            filenames,
             operation: Arc::new(RwLock::new(Operation::Map)),
             n_reduce,
         }
     }
 
+    /// Start coordinator processes
+    /// This will run a server which handles worker node requests
+    /// and a task manager to keep track of pending and completed tasks
     pub fn start(&self) {
-        // create channels for server - task managaer communication
+        // create channels for server - task manager communication
         let (pending_task_tx, pending_task_rx) = spmc::channel();
         let (processing_task_tx, processing_task_rx) = mpsc::channel();
 
@@ -55,18 +63,20 @@ impl Coordinator {
             pending_task_tx.send(filename.clone()).unwrap();
         }
 
-        // start another thread to check for dead processing tasks
-        // if dead tasks found, mvoe task to pending task channel
+        // keeps track of socket addresss of workers and the process they are running
         let mut worker_process_table: HashMap<SocketAddr, Process> = HashMap::new();
 
+        // worker ping timeout threshold
+        let timeout_threshold = Duration::from_secs(5);
         let total_files = self.filenames.len();
         let operation_rwlock_clone = self.operation.clone();
         let n_reduce_clone = self.n_reduce;
-        let timeout_threshold = Duration::from_secs(5);
 
         thread::spawn(move || {
             loop {
-                // on worker ping, create or update process
+                // on worker ping, create process or update process timestamp
+                // if worker sends in Option::None for filename then it is just a ping
+                // so just update the timestamp for the process
                 while let Ok(new_process) = processing_task_rx.try_recv() {
                     if new_process.filename == Option::None {
                         let worker_socket_addr = new_process.worker_socket_addr;
@@ -84,13 +94,16 @@ impl Coordinator {
 
                 if *operation_rwlock_clone.read().unwrap() == Operation::Map {
                     // get all intermediate filenames from directory
+                    // each filename will have n_reduce intermediate files
+                    // TODO: no need to initialize every iteration
                     let mut intermediate_file_map: HashMap<String, u8> = HashMap::new();
                     for path in fs::read_dir("./").unwrap() {
                         let file_name = path.unwrap().file_name().into_string().unwrap();
                         if file_name.contains("intermediate-") {
                             // split file_name with '-' as delimiter.
-                            // last part is the original filename
                             if let Some(file_name) =
+                                // example full filename: intermediate-n-filename.txt
+                                // so, get only the last part which is the actual filename
                                 file_name.split('-').collect::<Vec<&str>>().pop()
                             {
                                 if let Some(count) = intermediate_file_map.get_mut(file_name)
@@ -104,7 +117,11 @@ impl Coordinator {
                     }
 
                     // get all completed files so that worker data could be deleted
+                    // go though intermediate_file map and check how many intermediate
+                    // files there are for each filename and if it matches n_reduce, then
+                    // the map process is completed for that filename
                     let mut finished_file_count = 0;
+                    // TODO: no need to initialize every iteration
                     let mut finished_worker_map = HashMap::new();
                     for (filename, &count) in intermediate_file_map.iter() {
                         if count == n_reduce_clone {
@@ -115,7 +132,7 @@ impl Coordinator {
 
                     // get timed out workers
                     // check if each process is still alive
-                    // just check if process.timestamp older than 5 seconds
+                    // just check if process.timestamp older than timeout_threshold
                     // if older, send process.filename into pending_task channel
                     let mut timed_out_worker_list = Vec::new();
                     for (worker_socket_addr, process) in worker_process_table.iter() {
@@ -124,6 +141,9 @@ impl Coordinator {
                         }
                     }
 
+
+                    // delete timed out workers from worker_process table
+                    // re issue task to pending channel if task not complete
                     for worker_socket_addr in timed_out_worker_list {
                         if let Some(process) = worker_process_table.remove(&worker_socket_addr) {
                             if let Some(filename) = &process.filename {
@@ -283,6 +303,9 @@ fn handle_worker(
     stream.write(&json_payload).unwrap();
 }
 
+/// Create a coordinator node
+/// `filenames` is a list of all the input filenames
+/// `n_reduce` is the number of reduce tasks
 pub fn make_coordinator(filenames: Vec<String>, n_reduce: u8) {
     let coordinator = Coordinator::new(filenames, n_reduce);
     coordinator.start();

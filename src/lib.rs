@@ -31,12 +31,6 @@ pub struct KVPair {
     pub value: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub enum Operation {
-    Map,
-    Reduce,
-}
-
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub enum FromServer {
     PingResponse,

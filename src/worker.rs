@@ -7,31 +7,31 @@ use worker_node::make_worker;
 use mr::KVPair;
 
 fn main() {
-    let coordinator_ip = match env::args().skip(1).next() {
+    let mut args = env::args().skip(1);
+
+    let coordinator_ip = match args.next() {
         Some(ip) => ip,
         None => panic!("Coordinator IP empty"),
     };
 
-    // get map reduce functions
-    // let map: fn(String, String) -> Vec<KVPair> = ;
-    // let reduce: fn(String, Vec<String>) -> String = ;
+    let n_workers = match args.next() {
+        Some(n) => n,
+        None => panic!("Number of workers empty"),
+    };
 
-    // make_worker(mapf, reducef);
-    // let mut handles = Vec::new();
+    let n_workers = n_workers.parse().expect("Number of workers should be a number");
 
-    make_worker(coordinator_ip, map, reduce);
+    let mut handles = Vec::new();
+    for _ in 0..n_workers {
+        let coordinator_ip = coordinator_ip.clone();
+        handles.push(thread::spawn(move || {
+            make_worker(coordinator_ip, map, reduce);
+        }));
+    }
 
-    // for i in 0..10 {
-    //     let coordinator_ip = coordinator_ip.clone();
-    //     handles.push(thread::spawn(move || {
-    //     }));
-    // }
-
-    // for handle in handles {
-    //     handle.join().unwrap();
-    // }
-
-    // dispatch map reduce to worker
+    for handle in handles {
+        handle.join().unwrap();
+    }
 }
 
 fn map(_filename: String, content: String) -> Vec<KVPair> {
