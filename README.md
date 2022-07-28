@@ -1,9 +1,39 @@
 # Distributed Map Reduce
 An experimental implementation of Map Reduce based on Google's Map Reduce [paper](https://static.googleusercontent.com/media/research.google.com/en//archive/mapreduce-osdi04.pdf) written in Rust.
 
-
-## Architecture Diagram
-![Arch Diagram](Architecture.png)
+```
+        ┌─────────────────┐                           ┌─────────────────────┐
+        │ Coordinator     │                           │      Worker         │
+        │                 │                           │                     │
+        └─────────┬───────┘                           └──────────┬──────────┘
+                  │                                              │
+                  │                                              │
+                  │Provisions                                    │Provisions
+                  │                                              │
+                  │                                              │
+┌─────────────────┼─────────────────┐     ┌──────────────────────▼────────────────────┐
+│                 │                 │     │                                           │
+│                 │                 │     │                                           │
+│                 │                 │     │              ┌───────────────────┐        │
+│                 │                 │     │              │   Worker Node 1   │        │
+│                 │                 │     │      ┌◄──────┤                   │        │
+│                 │                 │     │      │       └───────────────────┘        │
+│                 │                 │     │      │                                    │
+│         ┌───────▼──────────┐      │     │      │       ┌───────────────────┐        │
+│         │                  │      │     │      │       │  Worker Node 2    │        │
+│         │ Coordinator Node ◄──────┼─────┼──────┤◄──────┤                   │        │
+│         └──────────────────┘      │     │      │       └───────────────────┘        │
+│                                   │     │      │                                    │
+│                                   │     │      │       ┌───────────────────┐        │
+│                                   │     │      │       │   Worker Node 3   │        │
+│                                   │     │      └◄──────┤                   │        │
+│                                   │     │              └───────────────────┘        │
+│                                   │     │                                           │
+│                                   │     │                                           │
+│                                   │     │                                           │
+└───────────────────────────────────┘     └───────────────────────────────────────────┘
+         Coordiantor Plane                              Worker Plane
+```
 
 ## Instructions to Run
 First start the coordinator
