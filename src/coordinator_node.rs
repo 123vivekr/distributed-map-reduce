@@ -2,8 +2,9 @@ use mr::{FromServer, FromWorker, Task};
 use spmc;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::net::SocketAddr;
+use tokio::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -41,16 +42,20 @@ impl Coordinator {
     /// Start coordinator processes
     /// This will run a server which handles worker node requests
     /// and a task manager to keep track of pending and completed tasks
-    pub fn start(&self) {
+    #[tokio::main]
+    pub async fn start(&self) {
         // create channels for server - task manager communication
         let (pending_task_tx, pending_task_rx) = spmc::channel();
         let (processing_task_tx, processing_task_rx) = mpsc::channel();
+
+        // TODO: Here task man and server start on 2 different threads; can we get it to run asynchronously?
+        // Perhaps using a select() operation?
 
         // start task manager thread
         self.start_task_manager(pending_task_tx, processing_task_rx);
 
         // start server thread
-        self.start_server(pending_task_rx, processing_task_tx);
+        self.start_server(pending_task_rx, processing_task_tx).await;
     }
 
     fn start_task_manager(
@@ -210,7 +215,7 @@ impl Coordinator {
 
     // handles worker ping
     // issues tasks to worker
-    fn start_server(
+    async fn start_server(
         &self,
         pending_task_rx: spmc::Receiver<String>,
         processing_task_tx: mpsc::Sender<Process>,
@@ -218,48 +223,43 @@ impl Coordinator {
         let operation_rwlock_clone = self.operation.clone();
         let n_reduce = Arc::new(self.n_reduce);
 
-        thread::spawn(move || {
-            // TODO: let addr = "[::1]:50051".parse().unwrap();
-            let listener = TcpListener::bind("127.0.0.1:12345").unwrap();
+            // TODO: enable option for arbitary IP
+            // let addr = "[::1]:50051".parse().unwrap();
+            let listener = TcpListener::bind("127.0.0.1:12345").await.unwrap();
             println!("Listening on localhost:12345");
 
-
-            for stream in listener.incoming() {
-                let stream = stream.unwrap();
-
-                // clone channel ends for each handler thread
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                
                 let pending_task_rx_handle = pending_task_rx.clone();
                 let processing_task_tx_handle = processing_task_tx.clone();
 
                 let operation_rwlock_clone = operation_rwlock_clone.clone();
                 let n_reduce_clone = n_reduce.clone();
 
-                thread::spawn(move || {
+                tokio::spawn(async move {
                     handle_worker(
                         stream,
                         pending_task_rx_handle,
                         processing_task_tx_handle,
                         operation_rwlock_clone,
                         n_reduce_clone,
-                    );
+                    ).await;
                 });
             }
-        })
-        .join()
-        .unwrap();
     }
 }
 
 // the logic behind server which handles a worker
-fn handle_worker(
+async fn handle_worker(
     mut stream: TcpStream,
     pending_task_rx: spmc::Receiver<String>,
-    mut processing_task_tx: mpsc::Sender<Process>,
+    processing_task_tx: mpsc::Sender<Process>,
     operation_rwlock_clone: Arc<RwLock<Operation>>,
     n_reduce_clone: Arc<u8>,
 ) {
     let mut buf = [0; 1024];
-    let size = stream.read(&mut buf).unwrap();
+    let size = stream.read(&mut buf).await.unwrap();
     let payload: FromWorker = serde_json::from_slice(&buf[..size]).unwrap();
 
     let response_payload: FromServer;
@@ -300,7 +300,7 @@ fn handle_worker(
     };
 
     let json_payload = serde_json::to_vec(&response_payload).unwrap();
-    stream.write(&json_payload).unwrap();
+    stream.write(&json_payload).await.unwrap();
 }
 
 /// Create a coordinator node
