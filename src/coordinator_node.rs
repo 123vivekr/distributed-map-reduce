@@ -95,6 +95,7 @@ impl Coordinator {
                 }
 
                 // wait 5 second
+                #[cfg(not(test))]
                 thread::sleep(Duration::from_secs(5));
 
                 if *operation_rwlock_clone.read().unwrap() == Operation::Map {
@@ -318,7 +319,7 @@ mod tests {
     // Task Manager tests
     #[test]
     fn load_filenames_into_pending_task_channel() {
-        let filenames = vec![String::from("samples/file1.txt"), String::from("samples/file2.txt")];
+        let filenames = vec![String::from("file1.txt"), String::from("file2.txt")];
         let coordinator = Coordinator::new(filenames, 1);
         let (pending_task_tx, pending_task_rx) = spmc::channel();
         let (_, processing_task_rx) = mpsc::channel();
@@ -326,15 +327,34 @@ mod tests {
         coordinator.start_task_manager(pending_task_tx, processing_task_rx);
 
         let file1 = pending_task_rx.recv().unwrap();
+        assert_eq!(file1, String::from("file1.txt"));
         let file2 = pending_task_rx.recv().unwrap();
-        assert_eq!(file1, String::from("samples/file1.txt"));
-        assert_eq!(file2, String::from("samples/file2.txt"));
-
+        assert_eq!(file2, String::from("file2.txt"));
         let empty = pending_task_rx.try_recv();
         assert_eq!(empty, Err(spmc::TryRecvError::Empty));
     }
 
-    // fn switch_to_reduce_mode_after_all_map_tasks_complete() {}
+    #[tokio::test]
+    async fn switch_to_reduce_mode_after_all_map_tasks_complete() {
+        let filenames = vec![String::from("file1.txt"), String::from("file2.txt")];
+        let coordinator = Coordinator::new(filenames, 1);
+        let (pending_task_tx, pending_task_rx) = spmc::channel();
+        let (_, processing_task_rx) = mpsc::channel();
+        let operation_rwlock_clone = coordinator.operation.clone();
+        assert_eq!(*operation_rwlock_clone.read().unwrap(), Operation::Map);
+        tokio::fs::File::create("intermediate-1-file1.txt").await.unwrap();
+        tokio::fs::File::create("intermediate-1-file2.txt").await.unwrap();
+
+        coordinator.start_task_manager(pending_task_tx, processing_task_rx);
+
+        let file1 = pending_task_rx.recv().unwrap();
+        assert_eq!(file1, String::from("file1.txt"));
+        let file2 = pending_task_rx.recv().unwrap();
+        assert_eq!(file2, String::from("file2.txt"));
+        let one = pending_task_rx.recv();
+        assert_eq!(one, Ok(String::from("1")));
+        assert_eq!(*operation_rwlock_clone.read().unwrap(), Operation::Reduce);
+    }
 
     // fn handle_timed_out_worker() {}
 
