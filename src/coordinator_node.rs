@@ -310,3 +310,40 @@ pub fn make_coordinator(filenames: Vec<String>, n_reduce: u8) {
     let coordinator = Coordinator::new(filenames, n_reduce);
     coordinator.start();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Task Manager tests
+    #[test]
+    fn load_filenames_into_pending_task_channel() {
+        let filenames = vec![String::from("samples/file1.txt"), String::from("samples/file2.txt")];
+        let coordinator = Coordinator::new(filenames, 1);
+        let (pending_task_tx, pending_task_rx) = spmc::channel();
+        let (_, processing_task_rx) = mpsc::channel();
+
+        coordinator.start_task_manager(pending_task_tx, processing_task_rx);
+
+        let file1 = pending_task_rx.recv().unwrap();
+        let file2 = pending_task_rx.recv().unwrap();
+        assert_eq!(file1, String::from("samples/file1.txt"));
+        assert_eq!(file2, String::from("samples/file2.txt"));
+
+        let empty = pending_task_rx.try_recv();
+        assert_eq!(empty, Err(spmc::TryRecvError::Empty));
+    }
+
+    // fn switch_to_reduce_mode_after_all_map_tasks_complete() {}
+
+    // fn handle_timed_out_worker() {}
+
+    // // Server tests
+    // fn ping_should_update_timestamp() {}
+
+    // fn fetch_should_return_valid_map_or_reduce_task() {}
+
+    // fn fetch_should_wait_if_no_pending_task() {}
+
+    // fn should_return_correct_n_reduce() {}
+}
