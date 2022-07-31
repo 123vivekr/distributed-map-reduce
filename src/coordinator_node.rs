@@ -2,14 +2,15 @@ use mr::{FromServer, FromWorker, Task};
 use spmc;
 use std::collections::HashMap;
 use std::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::net::SocketAddr;
-use tokio::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
+const TIMEOUT_THRESHOLD: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operation {
@@ -72,7 +73,6 @@ impl Coordinator {
         let mut worker_process_table: HashMap<SocketAddr, Process> = HashMap::new();
 
         // worker ping timeout threshold
-        let timeout_threshold = Duration::from_secs(5);
         let total_files = self.filenames.len();
         let operation_rwlock_clone = self.operation.clone();
         let n_reduce_clone = self.n_reduce;
@@ -112,8 +112,7 @@ impl Coordinator {
                                 // so, get only the last part which is the actual filename
                                 file_name.split('-').collect::<Vec<&str>>().pop()
                             {
-                                if let Some(count) = intermediate_file_map.get_mut(file_name)
-                                {
+                                if let Some(count) = intermediate_file_map.get_mut(file_name) {
                                     *count += 1;
                                 } else {
                                     intermediate_file_map.insert(file_name.to_string(), 1);
@@ -142,11 +141,10 @@ impl Coordinator {
                     // if older, send process.filename into pending_task channel
                     let mut timed_out_worker_list = Vec::new();
                     for (worker_socket_addr, process) in worker_process_table.iter() {
-                        if process.timestamp + timeout_threshold > Instant::now() {
+                        if process.timestamp + TIMEOUT_THRESHOLD < Instant::now() {
                             timed_out_worker_list.push(worker_socket_addr.clone());
                         }
                     }
-
 
                     // delete timed out workers from worker_process table
                     // re issue task to pending channel if task not complete
@@ -165,7 +163,7 @@ impl Coordinator {
                     if finished_file_count == total_files {
                         println!("Switching to Reduce");
                         *operation_rwlock_clone.write().unwrap() = Operation::Reduce;
-                        for n in 1..n_reduce_clone+1 {
+                        for n in 1..n_reduce_clone + 1 {
                             pending_task_tx.send(format!("{}", n)).unwrap();
                         }
                     }
@@ -181,8 +179,7 @@ impl Coordinator {
                             if let Some(file_name) =
                                 file_name.split('-').collect::<Vec<&str>>().pop()
                             {
-                                if let Some(count) = reduce_finished_worker_map.get_mut(file_name)
-                                {
+                                if let Some(count) = reduce_finished_worker_map.get_mut(file_name) {
                                     *count += 1;
                                 } else {
                                     reduce_finished_worker_map.insert(file_name.to_string(), 1);
@@ -194,10 +191,10 @@ impl Coordinator {
                     // get timed out workers
                     let mut timed_out_worker_list = Vec::new();
                     for (worker_socket_addr, process) in worker_process_table.iter() {
-                        if process.timestamp + timeout_threshold > Instant::now() {
+                        if process.timestamp + TIMEOUT_THRESHOLD > Instant::now() {
                             timed_out_worker_list.push(worker_socket_addr.clone());
                         }
-                    } 
+                    }
 
                     // delete workers and reissue operation only for timed out workers
                     for worker_socket_addr in timed_out_worker_list {
@@ -224,30 +221,31 @@ impl Coordinator {
         let operation_rwlock_clone = self.operation.clone();
         let n_reduce = Arc::new(self.n_reduce);
 
-            // TODO: enable option for arbitary IP
-            // let addr = "[::1]:50051".parse().unwrap();
-            let listener = TcpListener::bind("127.0.0.1:12345").await.unwrap();
-            println!("Listening on localhost:12345");
+        // TODO: enable option for arbitary IP
+        // let addr = "[::1]:50051".parse().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:12345").await.unwrap();
+        println!("Listening on localhost:12345");
 
-            loop {
-                let (stream, _) = listener.accept().await.unwrap();
-                
-                let pending_task_rx_handle = pending_task_rx.clone();
-                let processing_task_tx_handle = processing_task_tx.clone();
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
 
-                let operation_rwlock_clone = operation_rwlock_clone.clone();
-                let n_reduce_clone = n_reduce.clone();
+            let pending_task_rx_handle = pending_task_rx.clone();
+            let processing_task_tx_handle = processing_task_tx.clone();
 
-                tokio::spawn(async move {
-                    handle_worker(
-                        stream,
-                        pending_task_rx_handle,
-                        processing_task_tx_handle,
-                        operation_rwlock_clone,
-                        n_reduce_clone,
-                    ).await;
-                });
-            }
+            let operation_rwlock_clone = operation_rwlock_clone.clone();
+            let n_reduce_clone = n_reduce.clone();
+
+            tokio::spawn(async move {
+                handle_worker(
+                    stream,
+                    pending_task_rx_handle,
+                    processing_task_tx_handle,
+                    operation_rwlock_clone,
+                    n_reduce_clone,
+                )
+                .await;
+            });
+        }
     }
 }
 
@@ -294,7 +292,7 @@ async fn handle_worker(
                 // no task now. wait and retry later
                 response_payload = FromServer::Wait;
             }
-        },
+        }
         FromWorker::GetNReduce => {
             response_payload = FromServer::NReduce(*n_reduce_clone);
         }
@@ -342,8 +340,12 @@ mod tests {
         let (_, processing_task_rx) = mpsc::channel();
         let operation_rwlock_clone = coordinator.operation.clone();
         assert_eq!(*operation_rwlock_clone.read().unwrap(), Operation::Map);
-        tokio::fs::File::create("intermediate-1-file1.txt").await.unwrap();
-        tokio::fs::File::create("intermediate-1-file2.txt").await.unwrap();
+        tokio::fs::File::create("intermediate-1-file1.txt")
+            .await
+            .unwrap();
+        tokio::fs::File::create("intermediate-1-file2.txt")
+            .await
+            .unwrap();
 
         coordinator.start_task_manager(pending_task_tx, processing_task_rx);
 
@@ -356,10 +358,39 @@ mod tests {
         assert_eq!(*operation_rwlock_clone.read().unwrap(), Operation::Reduce);
     }
 
-    // fn handle_timed_out_worker() {}
+    #[test]
+    fn handle_timed_out_worker() {
+        let filenames = vec![String::from("file1.txt")];
+        let sample_worker_socket_addr = "127.0.0.1:8080".parse().unwrap();
+        let coordinator = Coordinator::new(filenames, 1);
+        let (pending_task_tx, pending_task_rx) = spmc::channel();
+        let (processing_task_tx, processing_task_rx) = mpsc::channel();
+
+        coordinator.start_task_manager(pending_task_tx, processing_task_rx);
+        // get filename form pending_task_channel
+        if let Ok(filename) = pending_task_rx.try_recv() {
+            // ensure pending_task_channel empty
+            let empty = pending_task_rx.try_recv();
+            assert_eq!(empty, Err(spmc::TryRecvError::Empty));
+
+            // put process on processing_task channel
+            let process = Process {
+                worker_socket_addr: sample_worker_socket_addr,
+                filename: Some(filename.clone()),
+                timestamp: Instant::now() - TIMEOUT_THRESHOLD, // timed out
+            };
+            processing_task_tx.send(process).unwrap();
+        }
+
+        let file1 = pending_task_rx.recv().unwrap();
+        assert_eq!(file1, String::from("file1.txt"));
+    }
 
     // // Server tests
-    // fn ping_should_update_timestamp() {}
+    // fn ping_should_update_timestamp() {
+        // get task
+        // 
+    // }
 
     // fn fetch_should_return_valid_map_or_reduce_task() {}
 
