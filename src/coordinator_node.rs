@@ -191,7 +191,7 @@ impl Coordinator {
                     // get timed out workers
                     let mut timed_out_worker_list = Vec::new();
                     for (worker_socket_addr, process) in worker_process_table.iter() {
-                        if process.timestamp + TIMEOUT_THRESHOLD > Instant::now() {
+                        if process.timestamp + TIMEOUT_THRESHOLD < Instant::now() {
                             timed_out_worker_list.push(worker_socket_addr.clone());
                         }
                     }
@@ -332,20 +332,16 @@ mod tests {
         assert_eq!(empty, Err(spmc::TryRecvError::Empty));
     }
 
-    #[tokio::test]
-    async fn switch_to_reduce_mode_after_all_map_tasks_complete() {
+    #[test]
+    fn switch_to_reduce_mode_after_all_map_tasks_complete() {
         let filenames = vec![String::from("file1.txt"), String::from("file2.txt")];
         let coordinator = Coordinator::new(filenames, 1);
         let (pending_task_tx, pending_task_rx) = spmc::channel();
         let (_, processing_task_rx) = mpsc::channel();
         let operation_rwlock_clone = coordinator.operation.clone();
         assert_eq!(*operation_rwlock_clone.read().unwrap(), Operation::Map);
-        tokio::fs::File::create("intermediate-1-file1.txt")
-            .await
-            .unwrap();
-        tokio::fs::File::create("intermediate-1-file2.txt")
-            .await
-            .unwrap();
+        std::fs::File::create("intermediate-1-file1.txt").unwrap();
+        std::fs::File::create("intermediate-1-file2.txt").unwrap();
 
         coordinator.start_task_manager(pending_task_tx, processing_task_rx);
 
@@ -356,13 +352,15 @@ mod tests {
         let one = pending_task_rx.recv();
         assert_eq!(one, Ok(String::from("1")));
         assert_eq!(*operation_rwlock_clone.read().unwrap(), Operation::Reduce);
+        std::fs::remove_file("intermediate-1-file1.txt").unwrap();
+        std::fs::remove_file("intermediate-1-file2.txt").unwrap();
     }
 
     #[test]
     fn handle_timed_out_worker() {
-        let filenames = vec![String::from("file1.txt")];
+        let filename = vec![String::from("file1.txt")];
         let sample_worker_socket_addr = "127.0.0.1:8080".parse().unwrap();
-        let coordinator = Coordinator::new(filenames, 1);
+        let coordinator = Coordinator::new(filename, 1);
         let (pending_task_tx, pending_task_rx) = spmc::channel();
         let (processing_task_tx, processing_task_rx) = mpsc::channel();
 
@@ -386,15 +384,44 @@ mod tests {
         assert_eq!(file1, String::from("file1.txt"));
     }
 
-    // // Server tests
-    // fn ping_should_update_timestamp() {
-        // get task
-        // 
+    // Server tests
+    // #[tokio::test]
+    // async fn ping_should_update_timestamp() {
+    //     let filename = vec![String::from("file1.txt")];
+    //     let (mut pending_task_tx, pending_task_rx) = spmc::channel();
+    //     let (processing_task_tx, processing_task_rx) = mpsc::channel();
+    //     let worker_socket_addr: SocketAddr = "127.0.0.2:12345".parse().unwrap();
+
+    //     // put task on pending_task channel
+    //     pending_task_tx.send(String::from("file1.txt")).unwrap();
+
+    //     // get task from server; check if task is on processing_task_tx
+    //     #[double]
+    //     use tokio::net::TcpStream;
+
+    //     handle_worker(stream, pending_task_rx, processing_task_tx, Arc::new(RwLock::new(Operation::Map)), Arc::new(1));
+
+
+    //     // ping server after a delay; check if server respond with ping
+    //     // check processing_task_tx channel for updated timestamp
     // }
 
-    // fn fetch_should_return_valid_map_or_reduce_task() {}
+    // #[tokio::test]
+    // async fn fetch_should_return_valid_map_or_reduce_task() {
+    //     let filenames = vec![String::from("file1.txt")];
+    //     let coordinator = Coordinator::new(filenames, 1);
+    //     let (pending_task_tx, pending_task_rx) = spmc::channel();
+    //     let (processing_task_tx, processing_task_rx) = mpsc::channel();
+    //     let worker_addr: SocketAddr = "127.0.0.2:12345".parse().unwrap();
 
-    // fn fetch_should_wait_if_no_pending_task() {}
+    //     coordinator.start_server(pending_task_rx, processing_task_tx).await;
 
-    // fn should_return_correct_n_reduce() {}
+    //     // put map task on pending_task channel
+    //     // fetch task from server
+    //     // check if task is valid map
+
+    //     // put reduce task on pending_task channel
+    //     // fetch task from server
+    //     // check if task is valid reduce
+    // }
 }
