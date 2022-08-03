@@ -1,7 +1,5 @@
 mod worker_node;
 use std::env;
-use std::net::SocketAddr;
-use std::str::FromStr;
 use std::thread;
 use worker_node::make_worker;
 use mr::KVPair;
