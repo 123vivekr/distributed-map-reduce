@@ -27,7 +27,7 @@ impl Worker {
 
         let mut buf = [0; 1024];
         let size = stream.read(&mut buf).unwrap();
-        let s = String::from_utf8_lossy(&buf);
+        let _s = String::from_utf8_lossy(&buf);
         serde_json::from_slice::<FromServer>(&buf[..size]).unwrap()
     }
 
